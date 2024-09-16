@@ -21,11 +21,11 @@ import {
     PickingInfo,
     Scene as BabyScene,
     ArcRotateCamera,
+    Scene,
 } from "@babylonjs/core";
 import { PBRMaterial } from "@babylonjs/core/Materials";
 import { IPointerEvent } from "@babylonjs/core/Events";
 import { HexColorPicker } from "react-colorful";
-import { debounce } from "lodash";
 import { Button, Spinner, Text, tokens } from "@fluentui/react-components";
 import {
     DecorativeOutline,
@@ -84,7 +84,6 @@ const LoadingErrorWrapper: FC<{
     return <>{children}</>;
 };
 
-const DEBOUNCE_SEND_CAMERA_UPDATES_INTERVAL = 100;
 export interface ICustomFollowData {
     cameraPosition: {
         x: number;
@@ -108,9 +107,11 @@ const LiveObjectViewer: FC = () => {
     // Babylon scene reference
     const sceneRef = useRef<Nullable<BabyScene>>(null);
     // Babylon arc rotation camera reference
-    const cameraRef = useRef<ArcRotateCamera>(null);
+    const [camera, setCamera] = useState<ArcRotateCamera | undefined>();
     // Pointer reference for mouse inputs, which is used so cursors continue working while interacting with the 3D model
     const pointerElementRef = useRef<HTMLDivElement>(null);
+    // Boolean tracking whether an incoming camera update is being applied
+    const isApplyingRemoteCameraUpdate = useRef(false);
 
     /**
      * Synchronized SharedMap for the color values that correspond to a material in the loaded .glb file
@@ -148,20 +149,14 @@ const LiveObjectViewer: FC = () => {
             // We use a callback because the camera position may change by the time LiveFollowMode is initialized
             return {
                 cameraPosition: {
-                    x: cameraRef.current?.position.x ?? 0,
-                    y: cameraRef.current?.position.y ?? 0,
-                    z: cameraRef.current?.position.z ?? 0,
+                    x: camera?.position.x ?? 0,
+                    y: camera?.position.y ?? 0,
+                    z: camera?.position.z ?? 0,
                 },
             };
         }, // default value
         ALLOWED_ROLES // roles who can "take control" of presenting
     );
-
-    /**
-     * Expected remote positions from following user (queue).
-     * Used to help determine when a camera position update in `onViewMatrixChangedObservable` was triggered via remote update.
-     */
-    const expectedPositionUpdatesRef = useRef<Vector3[]>([]);
 
     /**
      * Callback for when the local user selected a new color to apply to the 3D model
@@ -249,8 +244,8 @@ const LiveObjectViewer: FC = () => {
      * Send camera position for local user to remote
      */
     const sendCameraPos = useCallback(() => {
-        if (!cameraRef.current) return;
-        const cameraPosition = cameraRef.current.position;
+        if (!camera) return;
+        const cameraPosition = camera.position;
         updateUserCameraState({
             cameraPosition: {
                 x: cameraPosition.x,
@@ -261,39 +256,23 @@ const LiveObjectViewer: FC = () => {
     }, [updateUserCameraState]);
 
     /**
-     * Callback that wraps sendCameraPos into a lodash debounce.
-     * Debounce sending camera position for optimal performance.
-     */
-    const debouncedSendCameraPos = useCallback(
-        debounce(sendCameraPos, DEBOUNCE_SEND_CAMERA_UPDATES_INTERVAL),
-        [sendCameraPos]
-    );
-
-    /**
-     * debouncedSendCameraPos cleanup on unmount / dependency changes
-     */
-    useEffect(() => {
-        // Cancel previous debounce calls during useEffect cleanup.
-        return debouncedSendCameraPos.cancel;
-    }, [debouncedSendCameraPos]);
-
-    /**
      * Callback to snap camera position to presenting user when the remote value changes
      */
     const snapCameraIfFollowingUser = useCallback(() => {
         if (!remoteCameraState) return;
         // We do not need to snap to a remote value when referencing the local user's value
         if (remoteCameraState.isLocalValue) return;
-        if (!cameraRef.current) return;
+        if (!camera) return;
         const remoteCameraPos = new Vector3(
             remoteCameraState.value.cameraPosition.x,
             remoteCameraState.value.cameraPosition.y,
             remoteCameraState.value.cameraPosition.z
         );
-        if (vectorsAreRoughlyEqual(cameraRef.current.position, remoteCameraPos))
-            return;
-        expectedPositionUpdatesRef.current.push(remoteCameraPos);
-        cameraRef.current.setPosition(remoteCameraPos);
+        isApplyingRemoteCameraUpdate.current = true;
+        camera.setPosition(remoteCameraPos);
+        // Force the view matrix to be updated now (don't wait for the next render)
+        camera.getViewMatrix();
+        isApplyingRemoteCameraUpdate.current = false;
     }, [remoteCameraState]);
 
     /**
@@ -308,59 +287,42 @@ const LiveObjectViewer: FC = () => {
      */
     const onCameraViewMatrixChanged = useCallback(
         (evt: any) => {
-            debouncedSendCameraPos();
-            /**
-             * This observer does not tell us whether a change happened because we call camera.setPosition() vs. through user input.
-             * In this sample, we want to allow users to temporarily "suspend" following a presenter/user.
-             * To do this, we try to isolate remote changes from local ones via a `expectedPositionUpdatesRef.current` "queue".
-             * We add the value to queue in snapCameraIfFollowingUser, and when this listener picks up a change that matches that value, we remove it.
-             * For values not expected from a server, we can then determine whether we should call `startSuspension()`.
-             */
-            const isFromRemoteValue =
-                expectedPositionUpdatesRef.current.length > 0
-                    ? vectorsAreRoughlyEqual(
-                          expectedPositionUpdatesRef.current[0],
-                          evt.position
-                      )
-                    : false;
-            if (isFromRemoteValue) {
-                // Validated position was from `LivePresence` for presenting user, remove expected position from queue
-                expectedPositionUpdatesRef.current =
-                    expectedPositionUpdatesRef.current.slice(1);
-                return;
+            if (!isApplyingRemoteCameraUpdate.current) {
+                sendCameraPos();
+            } else {
+                if (!remoteCameraState) return;
+                // If the remote camera state is a local value, no need to suspend when out of sync
+                if (remoteCameraState.isLocalValue) return;
+                // Check to see if the local user's camera position is out of sync with remote position
+                const currentRemotePos = new Vector3(
+                    remoteCameraState.value.cameraPosition.x,
+                    remoteCameraState.value.cameraPosition.y,
+                    remoteCameraState.value.cameraPosition.z
+                );
+                if (vectorsAreRoughlyEqual(currentRemotePos, evt.position))
+                    return;
+                // The user selected a camera position that is not in sync with the remote position, so we start a new suspension.
+                // The user will be able to return in sync with the remote position when `endSuspension` is called.
+                beginSuspension();
             }
-
-            if (!remoteCameraState) return;
-            // If the remote camera state is a local value, no need to suspend when out of sync
-            if (remoteCameraState.isLocalValue) return;
-            // Check to see if the local user's camera position is out of sync with remote position
-            const currentRemotePos = new Vector3(
-                remoteCameraState.value.cameraPosition.x,
-                remoteCameraState.value.cameraPosition.y,
-                remoteCameraState.value.cameraPosition.z
-            );
-            if (vectorsAreRoughlyEqual(currentRemotePos, evt.position)) return;
-            // The user selected a camera position that is not in sync with the remote position, so we start a new suspension.
-            // The user will be able to return in sync with the remote position when `endSuspension` is called.
-            beginSuspension();
         },
-        [debouncedSendCameraPos, remoteCameraState, beginSuspension]
+        [sendCameraPos, remoteCameraState, beginSuspension]
     );
 
     /**
      * Set/update the camera view matrix change listener
      */
     useEffect(() => {
-        if (!cameraRef.current) return;
+        if (!camera) return;
         // Add an observable
-        cameraRef.current.onViewMatrixChangedObservable.add(
+        const observer = camera.onViewMatrixChangedObservable.add(
             onCameraViewMatrixChanged
         );
         // Clear observables on unmount
         return () => {
-            cameraRef.current?.onViewMatrixChangedObservable.clear();
+            observer.remove();
         };
-    }, [onCameraViewMatrixChanged]);
+    }, [camera, onCameraViewMatrixChanged]);
 
     // Choose to only get sharing status in meetingStage.
     // We use this to take control on meeting stage if isShareInitiator == true on first load.
@@ -455,15 +417,16 @@ const LiveObjectViewer: FC = () => {
             )}
             <FlexColumn fill="view" ref={pointerElementRef}>
                 <ModelViewerScene
-                    cameraRef={cameraRef}
                     modelFileName="plane.glb"
-                    onReadyObservable={(scene: any) => {
+                    onReadyObservable={(
+                        scene: Scene,
+                        camera: ArcRotateCamera
+                    ) => {
                         sceneRef.current = scene;
-                        if (sceneRef.current) {
-                            sceneRef.current.onPointerDown = handlePointerDown;
-                            applyRemoteColors();
-                            snapCameraIfFollowingUser();
-                        }
+                        sceneRef.current.onPointerDown = handlePointerDown;
+                        applyRemoteColors();
+                        snapCameraIfFollowingUser();
+                        setCamera(camera);
                     }}
                 />
             </FlexColumn>

@@ -15,8 +15,6 @@ import { FlexColumn } from "./flex";
 export const SingleUserModelViewer: FC = () => {
     // Babylon scene reference
     const sceneRef = useRef<Nullable<BabyScene>>(null);
-    // Babylon arc rotation camera reference
-    const cameraRef = useRef<ArcRotateCamera>(null);
     /**
      * Selected material for the color picker UI
      */
@@ -101,7 +99,6 @@ export const SingleUserModelViewer: FC = () => {
     return (
         <FlexColumn fill="view">
             <ModelViewerScene
-                cameraRef={cameraRef}
                 modelFileName="plane.glb"
                 onReadyObservable={onReady}
             />
