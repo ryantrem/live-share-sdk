@@ -146,13 +146,7 @@ const LiveObjectViewer: FC = () => {
         // Initial value, can either be the value itself or a callback to get the value.
         () => {
             // We use a callback because the camera position may change by the time LiveFollowMode is initialized
-            return {
-                cameraPosition: {
-                    x: camera?.position.x ?? 0,
-                    y: camera?.position.y ?? 0,
-                    z: camera?.position.z ?? 0,
-                },
-            };
+            return {};
         }, // default value
         ALLOWED_ROLES // roles who can "take control" of presenting
     );
