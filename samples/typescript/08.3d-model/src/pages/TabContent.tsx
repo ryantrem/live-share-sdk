@@ -38,7 +38,6 @@ import {
     ModelViewerScene,
     SingleUserModelViewer,
 } from "../components";
-import { vectorsAreRoughlyEqual } from "../utils/vector-utils";
 import { LiveCanvasOverlay } from "../components/LiveCanvasOverlay";
 import { isLiveShareSupported } from "../utils/teams-utils";
 import { useSharingStatus } from "../hooks/useSharingStatus";
@@ -85,7 +84,7 @@ const LoadingErrorWrapper: FC<{
 };
 
 export interface ICustomFollowData {
-    cameraPosition: {
+    cameraPosition?: {
         x: number;
         y: number;
         z: number;
@@ -107,7 +106,7 @@ const LiveObjectViewer: FC = () => {
     // Babylon scene reference
     const sceneRef = useRef<Nullable<BabyScene>>(null);
     // Babylon arc rotation camera reference
-    const [camera, setCamera] = useState<ArcRotateCamera | undefined>();
+    const [camera, setCamera] = useState<Nullable<ArcRotateCamera>>(null);
     // Pointer reference for mouse inputs, which is used so cursors continue working while interacting with the 3D model
     const pointerElementRef = useRef<HTMLDivElement>(null);
     // Boolean tracking whether an incoming camera update is being applied
@@ -259,7 +258,7 @@ const LiveObjectViewer: FC = () => {
      * Callback to snap camera position to presenting user when the remote value changes
      */
     const snapCameraIfFollowingUser = useCallback(() => {
-        if (!remoteCameraState) return;
+        if (!remoteCameraState?.value.cameraPosition) return;
         // We do not need to snap to a remote value when referencing the local user's value
         if (remoteCameraState.isLocalValue) return;
         if (!camera) return;
@@ -274,6 +273,7 @@ const LiveObjectViewer: FC = () => {
                 camera.setPosition(remoteCameraPos);
                 // Update the camera now (don't wait for the next render)
                 camera.update();
+                camera.updateCache();
                 isApplyingRemoteCameraUpdate.current = false;
             });
         }
@@ -291,34 +291,15 @@ const LiveObjectViewer: FC = () => {
      */
     const onCameraViewMatrixChanged = useCallback(
         (evt: any) => {
-            const currentRemotePos = remoteCameraState
-                ? new Vector3(
-                      remoteCameraState.value.cameraPosition.x,
-                      remoteCameraState.value.cameraPosition.y,
-                      remoteCameraState.value.cameraPosition.z
-                  )
-                : Vector3.Zero();
-
+            // If we are not applying a remote camera update, then it must be a local update
             if (!isApplyingRemoteCameraUpdate.current) {
                 sendCameraPos();
-                if (vectorsAreRoughlyEqual(currentRemotePos, evt.position))
-                    return;
                 // The user selected a camera position that is not in sync with the remote position, so we start a new suspension.
                 // The user will be able to return in sync with the remote position when `endSuspension` is called.
                 beginSuspension();
-            } else {
-                if (!remoteCameraState) return;
-                // If the remote camera state is a local value, no need to suspend when out of sync
-                if (remoteCameraState.isLocalValue) return;
-                // Check to see if the local user's camera position is out of sync with remote position
-                const currentRemotePos = new Vector3(
-                    remoteCameraState.value.cameraPosition.x,
-                    remoteCameraState.value.cameraPosition.y,
-                    remoteCameraState.value.cameraPosition.z
-                );
             }
         },
-        [sendCameraPos, remoteCameraState, beginSuspension]
+        [sendCameraPos, beginSuspension]
     );
 
     /**
@@ -429,7 +410,7 @@ const LiveObjectViewer: FC = () => {
             )}
             <FlexColumn fill="view" ref={pointerElementRef}>
                 <ModelViewerScene
-                    modelFileName="plane.glb"
+                    modelFileName="https://raw.githubusercontent.com/BabylonJS/Assets/master/splats/gs_Skull.splat"
                     onReadyObservable={(
                         scene: Scene,
                         camera: ArcRotateCamera
@@ -475,7 +456,7 @@ const LiveObjectViewer: FC = () => {
                 <LiveCanvasOverlay
                     pointerElementRef={pointerElementRef}
                     followingUserId={remoteCameraState.followingUserId}
-                    zPosition={remoteCameraState.value.cameraPosition.z}
+                    zPosition={remoteCameraState.value?.cameraPosition?.z ?? 0}
                 />
             )}
             {/* Follow mode information / actions */}
