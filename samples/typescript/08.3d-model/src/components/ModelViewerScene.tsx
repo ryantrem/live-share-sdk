@@ -1,10 +1,12 @@
 /* eslint-disable react/no-unknown-property */
 import { FC, Suspense, useEffect, useRef } from "react";
 import { ArcRotateCamera, Scene } from "@babylonjs/core";
-import "@babylonjs/loaders/glTF";
+import { registerBuiltInLoaders } from "@babylonjs/loaders/dynamic";
 import ErrorBoundary from "./ErrorBoundary";
 import type { HTML3DElement } from "@babylonjs/viewer";
 import "@babylonjs/viewer";
+
+registerBuiltInLoaders();
 
 interface HTML3DElementAttributes
     extends React.DetailedHTMLProps<
