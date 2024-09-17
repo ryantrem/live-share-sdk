@@ -289,18 +289,15 @@ const LiveObjectViewer: FC = () => {
     /**
      * Callback when the arcLightCamera position changes
      */
-    const onCameraViewMatrixChanged = useCallback(
-        (evt: any) => {
-            // If we are not applying a remote camera update, then it must be a local update
-            if (!isApplyingRemoteCameraUpdate.current) {
-                sendCameraPos();
-                // The user selected a camera position that is not in sync with the remote position, so we start a new suspension.
-                // The user will be able to return in sync with the remote position when `endSuspension` is called.
-                beginSuspension();
-            }
-        },
-        [sendCameraPos, beginSuspension]
-    );
+    const onCameraViewMatrixChanged = useCallback(() => {
+        // If we are not applying a remote camera update, then it must be a local update
+        if (!isApplyingRemoteCameraUpdate.current) {
+            sendCameraPos();
+            // The user selected a camera position that is not in sync with the remote position, so we start a new suspension.
+            // The user will be able to return in sync with the remote position when `endSuspension` is called.
+            beginSuspension();
+        }
+    }, [sendCameraPos, beginSuspension]);
 
     /**
      * Set/update the camera view matrix change listener
