@@ -253,7 +253,7 @@ const LiveObjectViewer: FC = () => {
                 z: cameraPosition.z,
             },
         });
-    }, [updateUserCameraState]);
+    }, [camera, updateUserCameraState]);
 
     /**
      * Callback to snap camera position to presenting user when the remote value changes
@@ -268,11 +268,15 @@ const LiveObjectViewer: FC = () => {
             remoteCameraState.value.cameraPosition.y,
             remoteCameraState.value.cameraPosition.z
         );
-        isApplyingRemoteCameraUpdate.current = true;
-        camera.setPosition(remoteCameraPos);
-        // Force the view matrix to be updated now (don't wait for the next render)
-        camera.getViewMatrix();
-        isApplyingRemoteCameraUpdate.current = false;
+        if (sceneRef.current) {
+            sceneRef.current.onBeforeRenderObservable.addOnce(() => {
+                isApplyingRemoteCameraUpdate.current = true;
+                camera.setPosition(remoteCameraPos);
+                // Update the camera now (don't wait for the next render)
+                camera.update();
+                isApplyingRemoteCameraUpdate.current = false;
+            });
+        }
     }, [remoteCameraState]);
 
     /**
@@ -287,8 +291,21 @@ const LiveObjectViewer: FC = () => {
      */
     const onCameraViewMatrixChanged = useCallback(
         (evt: any) => {
+            const currentRemotePos = remoteCameraState
+                ? new Vector3(
+                      remoteCameraState.value.cameraPosition.x,
+                      remoteCameraState.value.cameraPosition.y,
+                      remoteCameraState.value.cameraPosition.z
+                  )
+                : Vector3.Zero();
+
             if (!isApplyingRemoteCameraUpdate.current) {
                 sendCameraPos();
+                if (vectorsAreRoughlyEqual(currentRemotePos, evt.position))
+                    return;
+                // The user selected a camera position that is not in sync with the remote position, so we start a new suspension.
+                // The user will be able to return in sync with the remote position when `endSuspension` is called.
+                beginSuspension();
             } else {
                 if (!remoteCameraState) return;
                 // If the remote camera state is a local value, no need to suspend when out of sync
@@ -299,11 +316,6 @@ const LiveObjectViewer: FC = () => {
                     remoteCameraState.value.cameraPosition.y,
                     remoteCameraState.value.cameraPosition.z
                 );
-                if (vectorsAreRoughlyEqual(currentRemotePos, evt.position))
-                    return;
-                // The user selected a camera position that is not in sync with the remote position, so we start a new suspension.
-                // The user will be able to return in sync with the remote position when `endSuspension` is called.
-                beginSuspension();
             }
         },
         [sendCameraPos, remoteCameraState, beginSuspension]
