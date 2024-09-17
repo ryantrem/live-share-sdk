@@ -84,10 +84,17 @@ const LoadingErrorWrapper: FC<{
 };
 
 export interface ICustomFollowData {
-    cameraPosition?: {
-        x: number;
-        y: number;
-        z: number;
+    cameraState?: {
+        position: {
+            x: number;
+            y: number;
+            z: number;
+        };
+        target: {
+            x: number;
+            y: number;
+            z: number;
+        };
     };
 }
 
@@ -238,12 +245,18 @@ const LiveObjectViewer: FC = () => {
      */
     const sendCameraPos = useCallback(() => {
         if (!camera) return;
-        const cameraPosition = camera.position;
         updateUserCameraState({
-            cameraPosition: {
-                x: cameraPosition.x,
-                y: cameraPosition.y,
-                z: cameraPosition.z,
+            cameraState: {
+                position: {
+                    x: camera.position.x,
+                    y: camera.position.y,
+                    z: camera.position.z,
+                },
+                target: {
+                    x: camera.target.x,
+                    y: camera.target.y,
+                    z: camera.target.z,
+                },
             },
         });
     }, [camera, updateUserCameraState]);
@@ -252,19 +265,25 @@ const LiveObjectViewer: FC = () => {
      * Callback to snap camera position to presenting user when the remote value changes
      */
     const snapCameraIfFollowingUser = useCallback(() => {
-        if (!remoteCameraState?.value.cameraPosition) return;
+        if (!remoteCameraState?.value.cameraState) return;
         // We do not need to snap to a remote value when referencing the local user's value
         if (remoteCameraState.isLocalValue) return;
         if (!camera) return;
         const remoteCameraPos = new Vector3(
-            remoteCameraState.value.cameraPosition.x,
-            remoteCameraState.value.cameraPosition.y,
-            remoteCameraState.value.cameraPosition.z
+            remoteCameraState.value.cameraState.position.x,
+            remoteCameraState.value.cameraState.position.y,
+            remoteCameraState.value.cameraState.position.z
+        );
+        const remoteCameraTarget = new Vector3(
+            remoteCameraState.value.cameraState.target.x,
+            remoteCameraState.value.cameraState.target.y,
+            remoteCameraState.value.cameraState.target.z
         );
         if (sceneRef.current) {
             sceneRef.current.onBeforeRenderObservable.addOnce(() => {
                 isApplyingRemoteCameraUpdate.current = true;
                 camera.setPosition(remoteCameraPos);
+                camera.setTarget(remoteCameraTarget);
                 // Update the camera now (don't wait for the next render)
                 camera.update();
                 camera.updateCache();
@@ -447,7 +466,9 @@ const LiveObjectViewer: FC = () => {
                 <LiveCanvasOverlay
                     pointerElementRef={pointerElementRef}
                     followingUserId={remoteCameraState.followingUserId}
-                    zPosition={remoteCameraState.value?.cameraPosition?.z ?? 0}
+                    zPosition={
+                        remoteCameraState.value?.cameraState?.position?.z ?? 0
+                    }
                 />
             )}
             {/* Follow mode information / actions */}
